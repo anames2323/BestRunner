@@ -1,6 +1,6 @@
 # Для чего нужен этот файл?
 # Тут храняться сохранения, админ панель, и тд. Без него сайт работать будет некорекктно!
-# При повторном сливе, указывать автора: @x3layka или в телеграм: @coderingonelove (Отличительный знак: Ориг акк имеет табличку SCAM.)
+# При повторном сливе, указывать автора: @x3layka или в телеграм: @coderingonelove
 
 import logging
 from flask import Flask, request, jsonify
@@ -87,8 +87,7 @@ def get_user_data():
 
 @app.route('/api/debug', methods=['GET'])
 def debug():
-    data = load_data()
-    return jsonify(data)
+    return jsonify(load_data())
 
 @app.route('/api/open_case', methods=['POST'])
 def open_case():
@@ -192,6 +191,63 @@ def open_case():
     except Exception as e:
         logger.error(f"Error in open_case: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/upgrade/merge', methods=['POST'])
+def upgrade_merge():
+    """Слияние: 1 целевой предмет + 2 одинаковых = улучшенный"""
+    data = request.json
+    user_id = data.get('user_id')
+    target_idx = data.get('target_index')
+    sacrifice_name = data.get('sacrifice_name')
+
+    if target_idx is None or not sacrifice_name:
+        return jsonify({"error": "Выберите целевой предмет и предмет для жертвы"}), 400
+
+    user = get_user(user_id)
+    inv = user['inventory']
+
+    if target_idx >= len(inv):
+        return jsonify({"error": "Предмет не найден"}), 404
+
+    target = inv[target_idx]
+
+    # Ищем 2 предмета с таким же именем (не считая целевой)
+    sacrifices = []
+    new_inv = []
+    count = 0
+    for i, item in enumerate(inv):
+        if i == target_idx:
+            continue
+        if item['name'] == sacrifice_name and count < 2:
+            sacrifices.append(item)
+            count += 1
+        else:
+            new_inv.append(item)
+
+    if len(sacrifices) < 2:
+        return jsonify({"error": f"Нужно 2 предмета '{sacrifice_name}' для жертвы"}), 400
+
+    # Улучшаем целевой предмет
+    bonus_price = sum(s['price'] for s in sacrifices)
+    new_item = target.copy()
+    new_item['price'] = int(new_item['price'] + bonus_price * 0.8)
+    new_item['name'] = f"⭐ {target['name']}"
+
+    # Повышаем раритет
+    rarity_rank = {'common': 1, 'unusual': 2, 'rare': 3, 'epic': 4, 'legendary': 5, 'super-legendary': 6}
+    rarity_reverse = {1: 'common', 2: 'unusual', 3: 'rare', 4: 'epic', 5: 'legendary', 6: 'super-legendary'}
+    current_rank = rarity_rank.get(target['rarity_color'], 1)
+    if current_rank < 6:
+        new_item['rarity_color'] = rarity_reverse[current_rank + 1]
+
+    new_inv.append(new_item)
+    user['inventory'] = new_inv
+
+    all_data = load_data()
+    all_data['users'][str(user_id)] = user
+    save_data(all_data)
+
+    return jsonify({"success": True, "new_item": new_item, "inventory": new_inv})
 
 @app.route('/api/admin/give_balance', methods=['POST'])
 def admin_give_balance():
@@ -306,34 +362,22 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     elif command == "info" and len(args) >= 2:
         user_id = args[1]
         user = get_user(user_id)
-        inv_count = len(user.get('inventory', []))
-        cases = user.get('stats', {}).get('cases_opened', 0)
-        best = user.get('stats', {}).get('best_drop', {})
-        best_name = best.get('name', 'нет') if best else 'нет'
         await update.message.reply_text(
-            f"👤 Пользователь: {user_id}\n"
-            f"💰 Баланс: {user['balance']}\n"
-            f"🎒 Предметов: {inv_count}\n"
-            f"📦 Открыто кейсов: {cases}\n"
-            f"🏆 Лучший дроп: {best_name}"
+            f"👤 [{user_id}]\n💰 {user['balance']}\n🎒 {len(user['inventory'])} предметов"
         )
 
     elif command == "users":
         users = all_data.get('users', {})
-        if not users:
-            await update.message.reply_text("Нет пользователей")
-        else:
-            text = "👥 Все пользователи:\n\n"
-            for uid, u in users.items():
-                text += f"ID: {uid}\n💰 Баланс: {u['balance']}\n📦 Кейсов: {u.get('stats', {}).get('cases_opened', 0)}\n\n"
-            await update.message.reply_text(text[:4000])
+        text = "👥 Пользователи:\n"
+        for uid, u in users.items():
+            text += f"ID: {uid} | 💰 {u['balance']}\n"
+        await update.message.reply_text(text[:4000])
 
     elif command == "flags":
         flags = all_data.get('flags', {})
         text = "🚩 Флаги:\n"
         for k, v in flags.items():
             text += f"{'✅' if v else '❌'} {k}\n"
-        text += f"\n🎪 Ивент: {all_data.get('event')}"
         await update.message.reply_text(text)
 
     elif command == "flag" and len(args) >= 3:
@@ -351,7 +395,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         mult = int(args[2]) if len(args) >= 3 else 1
         all_data['event'] = {"name": name, "multiplier": mult}
         save_data(all_data)
-        await update.message.reply_text(f"✅ Ивент создан: {name} (x{mult})")
+        await update.message.reply_text(f"✅ Ивент: {name} (x{mult})")
 
     elif command == "event_off":
         all_data['event'] = None
@@ -359,7 +403,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("✅ Ивент удалён")
 
     else:
-        await update.message.reply_text("❌ Неверная команда. Введите /admin для списка команд")
+        await update.message.reply_text("❌ Неверная команда")
 
 def run_flask_app():
     port = int(os.environ.get('PORT', 8080))
