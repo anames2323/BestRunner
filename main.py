@@ -85,6 +85,11 @@ def get_user_data():
         "event": data["event"]
     })
 
+@app.route('/api/debug', methods=['GET'])
+def debug():
+    data = load_data()
+    return jsonify(data)
+
 @app.route('/api/open_case', methods=['POST'])
 def open_case():
     try:
@@ -253,6 +258,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply_markup=reply_markup
     )
 
+async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(f"Ваш Telegram ID: {update.effective_user.id}")
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Доступ запрещён")
@@ -265,6 +273,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "/admin give [user_id] [amount] — выдать баланс\n"
             "/admin setbal [user_id] [amount] — установить баланс\n"
             "/admin info [user_id] — инфо о пользователе\n"
+            "/admin users — список всех пользователей\n"
             "/admin flag [название] [true/false] — включить/выключить буст\n"
             "/admin flags — посмотреть все флаги\n"
             "/admin event [название] [множитель] — создать ивент\n"
@@ -308,6 +317,16 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"📦 Открыто кейсов: {cases}\n"
             f"🏆 Лучший дроп: {best_name}"
         )
+
+    elif command == "users":
+        users = all_data.get('users', {})
+        if not users:
+            await update.message.reply_text("Нет пользователей")
+        else:
+            text = "👥 Все пользователи:\n\n"
+            for uid, u in users.items():
+                text += f"ID: {uid}\n💰 Баланс: {u['balance']}\n📦 Кейсов: {u.get('stats', {}).get('cases_opened', 0)}\n\n"
+            await update.message.reply_text(text[:4000])
 
     elif command == "flags":
         flags = all_data.get('flags', {})
@@ -353,6 +372,7 @@ def main() -> None:
 
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("myid", myid_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
