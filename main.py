@@ -11,6 +11,7 @@ import json
 import requests
 import os
 import threading
+import random
 
 TOKEN = "8356402633:AAEMJqxjjiBGTrLIubQIQgRWfw0DkJ0Qxg0"
 ADMIN_ID = 8795006636
@@ -76,7 +77,6 @@ def get_user_data():
     user_id = request.args.get('user_id')
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
-
     data = load_data()
     user = get_user(user_id)
     return jsonify({
@@ -122,34 +122,26 @@ def open_case():
             common_and_unusual = [item for item in current_case['items'] if item['rarity_color'] in ['common', 'unusual']]
             total_rare_chance = sum(item['chance'] for item in rare_and_above)
             total_common_chance = sum(item['chance'] for item in common_and_unusual)
-
             for item in rare_and_above:
                 item['chance'] *= 3
-
             new_total_rare_chance = sum(item['chance'] for item in rare_and_above)
             adjustment = new_total_rare_chance - total_rare_chance
-
             adjustment_ratio = (total_common_chance - adjustment) / total_common_chance if total_common_chance > 0 else 0
             for item in common_and_unusual:
                 item['chance'] *= adjustment_ratio
-
             modified_items = rare_and_above + common_and_unusual
         elif flags.get('double_chances'):
             rare_and_above = [item for item in current_case['items'] if item['rarity_color'] in ['super-legendary', 'legendary', 'epic', 'rare']]
             common_and_unusual = [item for item in current_case['items'] if item['rarity_color'] in ['common', 'unusual']]
             total_rare_chance = sum(item['chance'] for item in rare_and_above)
             total_common_chance = sum(item['chance'] for item in common_and_unusual)
-
             for item in rare_and_above:
                 item['chance'] *= 2
-
             new_total_rare_chance = sum(item['chance'] for item in rare_and_above)
             adjustment = new_total_rare_chance - total_rare_chance
-
             adjustment_ratio = (total_common_chance - adjustment) / total_common_chance if total_common_chance > 0 else 0
             for item in common_and_unusual:
                 item['chance'] *= adjustment_ratio
-
             modified_items = rare_and_above + common_and_unusual
         else:
             modified_items = current_case['items']
@@ -159,11 +151,10 @@ def open_case():
         if total_chance == 0:
             winning_item = current_case['items'][0]
         else:
-            rand_text = requests.get('http://www.random.org/decimal-fractions/?num=1&dec=10&format=plain&rnd=new').text
             try:
+                rand_text = requests.get('http://www.random.org/decimal-fractions/?num=1&dec=10&format=plain&rnd=new', timeout=3).text
                 rand_num = total_chance * float(rand_text)
-            except ValueError:
-                import random
+            except:
                 rand_num = total_chance * random.random()
 
             winning_item = None
@@ -192,62 +183,195 @@ def open_case():
         logger.error(f"Error in open_case: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/api/upgrade/merge', methods=['POST'])
-def upgrade_merge():
-    """Слияние: 1 целевой предмет + 2 одинаковых = улучшенный"""
+# ========== ИГРЫ ==========
+
+@app.route('/api/game/rocket', methods=['POST'])
+def game_rocket():
+    """Ракета: ставка, летит до случайного множителя"""
     data = request.json
     user_id = data.get('user_id')
-    target_idx = data.get('target_index')
-    sacrifice_name = data.get('sacrifice_name')
-
-    if target_idx is None or not sacrifice_name:
-        return jsonify({"error": "Выберите целевой предмет и предмет для жертвы"}), 400
+    action = data.get('action')  # 'start' или 'cashout'
+    bet = data.get('bet', 100)
 
     user = get_user(user_id)
-    inv = user['inventory']
-
-    if target_idx >= len(inv):
-        return jsonify({"error": "Предмет не найден"}), 404
-
-    target = inv[target_idx]
-
-    # Ищем 2 предмета с таким же именем (не считая целевой)
-    sacrifices = []
-    new_inv = []
-    count = 0
-    for i, item in enumerate(inv):
-        if i == target_idx:
-            continue
-        if item['name'] == sacrifice_name and count < 2:
-            sacrifices.append(item)
-            count += 1
-        else:
-            new_inv.append(item)
-
-    if len(sacrifices) < 2:
-        return jsonify({"error": f"Нужно 2 предмета '{sacrifice_name}' для жертвы"}), 400
-
-    # Улучшаем целевой предмет
-    bonus_price = sum(s['price'] for s in sacrifices)
-    new_item = target.copy()
-    new_item['price'] = int(new_item['price'] + bonus_price * 0.8)
-    new_item['name'] = f"⭐ {target['name']}"
-
-    # Повышаем раритет
-    rarity_rank = {'common': 1, 'unusual': 2, 'rare': 3, 'epic': 4, 'legendary': 5, 'super-legendary': 6}
-    rarity_reverse = {1: 'common', 2: 'unusual', 3: 'rare', 4: 'epic', 5: 'legendary', 6: 'super-legendary'}
-    current_rank = rarity_rank.get(target['rarity_color'], 1)
-    if current_rank < 6:
-        new_item['rarity_color'] = rarity_reverse[current_rank + 1]
-
-    new_inv.append(new_item)
-    user['inventory'] = new_inv
-
     all_data = load_data()
-    all_data['users'][str(user_id)] = user
-    save_data(all_data)
 
-    return jsonify({"success": True, "new_item": new_item, "inventory": new_inv})
+    if action == 'start':
+        if user['balance'] < bet:
+            return jsonify({"error": "Недостаточно монет"}), 402
+        user['balance'] -= bet
+        # Генерируем множитель взрыва
+        crash = round(random.uniform(0.8, 30), 2)
+        if crash < 1:
+            crash = 1
+
+        all_data['users'][str(user_id)] = user
+        all_data[f'rocket_{user_id}'] = {
+            'bet': bet,
+            'crash': crash,
+            'active': True,
+            'points': []  # для графика
+        }
+        # Генерируем точки графика
+        points = []
+        for x in range(0, 101, 2):
+            y = round(1 + (crash - 1) * (x / 100) ** 2, 2)
+            points.append({'x': x, 'y': min(y, crash)})
+            if y >= crash:
+                break
+        all_data[f'rocket_{user_id}']['points'] = points
+
+        save_data(all_data)
+        return jsonify({
+            "success": True,
+            "balance": user['balance'],
+            "bet": bet,
+            "crash": crash,
+            "points": points
+        })
+
+    elif action == 'cashout':
+        game = all_data.get(f'rocket_{user_id}')
+        if not game or not game.get('active'):
+            return jsonify({"error": "Нет активной игры"}), 400
+
+        multiplier = data.get('multiplier', 1.0)
+        crash = game['crash']
+
+        if multiplier > crash:
+            game['active'] = False
+            all_data[f'rocket_{user_id}'] = game
+            save_data(all_data)
+            return jsonify({"success": False, "crashed": True, "crash_at": crash, "balance": user['balance']})
+
+        win = int(game['bet'] * multiplier)
+        user['balance'] += win
+        game['active'] = False
+        all_data[f'rocket_{user_id}'] = game
+        all_data['users'][str(user_id)] = user
+        save_data(all_data)
+        return jsonify({
+            "success": True,
+            "win": win,
+            "multiplier": multiplier,
+            "balance": user['balance']
+        })
+
+    return jsonify({"error": "Неверное действие"}), 400
+
+
+@app.route('/api/game/mines', methods=['POST'])
+def game_mines():
+    """Сапёр: поле 5x5, 5 мин, открываешь безопасные клетки"""
+    data = request.json
+    user_id = data.get('user_id')
+    action = data.get('action')  # 'start', 'reveal', 'cashout'
+    bet = data.get('bet', 50)
+    cell = data.get('cell')  # номер клетки 0-24
+
+    user = get_user(user_id)
+    all_data = load_data()
+    game_key = f'mines_{user_id}'
+
+    if action == 'start':
+        if user['balance'] < bet:
+            return jsonify({"error": "Недостаточно монет"}), 402
+        user['balance'] -= bet
+
+        # Создаём поле: 5 мин из 25 клеток
+        mines = random.sample(range(25), 5)
+        revealed = []
+        multipliers = {0: 1.2, 1: 1.5, 2: 2.0, 3: 3.0, 4: 5.0, 5: 8.0, 6: 12.0, 7: 18.0, 8: 25.0,
+                       9: 35.0, 10: 50.0, 11: 70.0, 12: 100.0, 13: 150.0, 14: 200.0, 15: 300.0,
+                       16: 500.0, 17: 750.0, 18: 1000.0, 19: 2000.0, 20: 5000.0}
+
+        all_data['users'][str(user_id)] = user
+        all_data[game_key] = {
+            'bet': bet,
+            'mines': mines,
+            'revealed': [],
+            'active': True,
+            'multipliers': multipliers
+        }
+        save_data(all_data)
+        return jsonify({
+            "success": True,
+            "balance": user['balance'],
+            "bet": bet,
+            "revealed": [],
+            "safe_count": 20
+        })
+
+    elif action == 'reveal':
+        game = all_data.get(game_key)
+        if not game or not game.get('active'):
+            return jsonify({"error": "Нет активной игры"}), 400
+
+        if cell is None:
+            return jsonify({"error": "Выберите клетку"}), 400
+
+        if cell in game['revealed']:
+            return jsonify({"error": "Клетка уже открыта"}), 400
+
+        game['revealed'].append(cell)
+
+        if cell in game['mines']:
+            # Взорвался
+            game['active'] = False
+            all_data[game_key] = game
+            save_data(all_data)
+            return jsonify({
+                "success": False,
+                "bomb": True,
+                "mines": game['mines'],
+                "balance": user['balance'],
+                "opened": len(game['revealed'])
+            })
+
+        # Безопасная клетка
+        opened = len(game['revealed'])
+        current_mult = game['multipliers'].get(opened, 1.0)
+
+        all_data[game_key] = game
+        all_data['users'][str(user_id)] = user
+        save_data(all_data)
+
+        return jsonify({
+            "success": True,
+            "bomb": False,
+            "opened": opened,
+            "multiplier": current_mult,
+            "cell": cell,
+            "safe_count": 20 - opened
+        })
+
+    elif action == 'cashout':
+        game = all_data.get(game_key)
+        if not game or not game.get('active'):
+            return jsonify({"error": "Нет активной игры"}), 400
+
+        opened = len(game['revealed'])
+        mult = game['multipliers'].get(opened, 1.0)
+        win = int(game['bet'] * mult)
+
+        user['balance'] += win
+        game['active'] = False
+        all_data[game_key] = game
+        all_data['users'][str(user_id)] = user
+        save_data(all_data)
+        return jsonify({
+            "success": True,
+            "win": win,
+            "opened": opened,
+            "multiplier": mult,
+            "balance": user['balance'],
+            "mines": game['mines']
+        })
+
+    return jsonify({"error": "Неверное действие"}), 400
+
+
+# ========== АДМИНКА ==========
 
 @app.route('/api/admin/give_balance', methods=['POST'])
 def admin_give_balance():
@@ -255,17 +379,13 @@ def admin_give_balance():
     admin_id = data.get('admin_id')
     user_id = data.get('user_id')
     amount = data.get('amount')
-
     if int(admin_id) != ADMIN_ID:
         return jsonify({"error": "Access denied"}), 403
-
     user_data = get_user(user_id)
     user_data['balance'] += int(amount)
-
     all_data = load_data()
     all_data['users'][str(user_id)] = user_data
     save_data(all_data)
-
     return jsonify({"success": True, "new_balance": user_data['balance']})
 
 @app.route('/api/admin/set_flags', methods=['POST'])
@@ -274,19 +394,14 @@ def admin_set_flags():
     admin_id = data.get('admin_id')
     flag = data.get('flag')
     value = data.get('value')
-
     if int(admin_id) != ADMIN_ID:
         return jsonify({"error": "Access denied"}), 403
-
     all_data = load_data()
     for key in all_data['flags']:
         all_data['flags'][key] = False
-
     if value == 'true':
         all_data['flags'][flag] = True
-
     save_data(all_data)
-
     return jsonify({"success": True, "flags": all_data['flags']})
 
 @app.route('/api/admin/create_event', methods=['POST'])
@@ -294,15 +409,15 @@ def admin_create_event():
     data = request.json
     admin_id = data.get('admin_id')
     event_data = data.get('event_data')
-
     if int(admin_id) != ADMIN_ID:
         return jsonify({"error": "Access denied"}), 403
-
     all_data = load_data()
     all_data['event'] = event_data
     save_data(all_data)
-
     return jsonify({"success": True, "event": all_data['event']})
+
+
+# ========== TELEGRAM BOT ==========
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [[
@@ -404,6 +519,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     else:
         await update.message.reply_text("❌ Неверная команда")
+
 
 def run_flask_app():
     port = int(os.environ.get('PORT', 8080))
