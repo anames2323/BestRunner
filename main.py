@@ -253,10 +253,99 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply_markup=reply_markup
     )
 
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Доступ запрещён")
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "📋 Админ-команды:\n\n"
+            "/admin give [user_id] [amount] — выдать баланс\n"
+            "/admin setbal [user_id] [amount] — установить баланс\n"
+            "/admin info [user_id] — инфо о пользователе\n"
+            "/admin flag [название] [true/false] — включить/выключить буст\n"
+            "/admin flags — посмотреть все флаги\n"
+            "/admin event [название] [множитель] — создать ивент\n"
+            "/admin event_off — удалить ивент"
+        )
+        return
+
+    command = args[0]
+    all_data = load_data()
+
+    if command == "give" and len(args) >= 3:
+        user_id = args[1]
+        amount = int(args[2])
+        user = get_user(user_id)
+        user['balance'] += amount
+        all_data['users'][str(user_id)] = user
+        save_data(all_data)
+        await update.message.reply_text(f"✅ +{amount} монет [{user_id}]\n💰 Баланс: {user['balance']}")
+
+    elif command == "setbal" and len(args) >= 3:
+        user_id = args[1]
+        amount = int(args[2])
+        user = get_user(user_id)
+        old = user['balance']
+        user['balance'] = amount
+        all_data['users'][str(user_id)] = user
+        save_data(all_data)
+        await update.message.reply_text(f"✅ Баланс [{user_id}]\n📉 {old} → 📈 {amount}")
+
+    elif command == "info" and len(args) >= 2:
+        user_id = args[1]
+        user = get_user(user_id)
+        inv_count = len(user.get('inventory', []))
+        cases = user.get('stats', {}).get('cases_opened', 0)
+        best = user.get('stats', {}).get('best_drop', {})
+        best_name = best.get('name', 'нет') if best else 'нет'
+        await update.message.reply_text(
+            f"👤 Пользователь: {user_id}\n"
+            f"💰 Баланс: {user['balance']}\n"
+            f"🎒 Предметов: {inv_count}\n"
+            f"📦 Открыто кейсов: {cases}\n"
+            f"🏆 Лучший дроп: {best_name}"
+        )
+
+    elif command == "flags":
+        flags = all_data.get('flags', {})
+        text = "🚩 Флаги:\n"
+        for k, v in flags.items():
+            text += f"{'✅' if v else '❌'} {k}\n"
+        text += f"\n🎪 Ивент: {all_data.get('event')}"
+        await update.message.reply_text(text)
+
+    elif command == "flag" and len(args) >= 3:
+        flag_name = args[1]
+        value = args[2]
+        for key in all_data['flags']:
+            all_data['flags'][key] = False
+        if value == 'true':
+            all_data['flags'][flag_name] = True
+        save_data(all_data)
+        await update.message.reply_text(f"✅ {flag_name} = {value}")
+
+    elif command == "event" and len(args) >= 2:
+        name = args[1]
+        mult = int(args[2]) if len(args) >= 3 else 1
+        all_data['event'] = {"name": name, "multiplier": mult}
+        save_data(all_data)
+        await update.message.reply_text(f"✅ Ивент создан: {name} (x{mult})")
+
+    elif command == "event_off":
+        all_data['event'] = None
+        save_data(all_data)
+        await update.message.reply_text("✅ Ивент удалён")
+
+    else:
+        await update.message.reply_text("❌ Неверная команда. Введите /admin для списка команд")
+
 def run_flask_app():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-    
+
 def main() -> None:
     flask_thread = threading.Thread(target=run_flask_app)
     flask_thread.daemon = True
@@ -264,13 +353,8 @@ def main() -> None:
 
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("admin", admin_command))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    flask_thread = threading.Thread(target=run_flask_app)
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start_command))
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    main()
