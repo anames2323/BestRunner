@@ -254,8 +254,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 def run_flask_app():
-    app.run(host='0.0.0.0', port=5000) # ОСТАВЛЯЕМ КАК ТУТ, НИЧЕГО НЕ ТРОГАЕМ ЕСЛИ ПРОСТО ТЕСТИТЕ.
-
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+    
 def main() -> None:
     flask_thread = threading.Thread(target=run_flask_app)
     flask_thread.daemon = True
